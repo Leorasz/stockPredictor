@@ -59,7 +59,7 @@ class predictor(nn.Module):
         super().__init__()
         self.model = model
 
-    def train(self, inputs, targets, alpha, epochs, plot=True):
+    def train(self, inputs, targets, alpha, epochs, earlystop=0, plot=True):
 
         criterion = nn.MSELoss()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=alpha)
@@ -67,6 +67,7 @@ class predictor(nn.Module):
         losses = []
         for epoch in range(epochs):
             lossAccumulator = 0
+            fullbrake = False
             for element in range(len(inputs)):
                 self.model.forward(inputs[element].view(1,-1))
 
@@ -90,6 +91,17 @@ class predictor(nn.Module):
             plt.show()
             plt.clf()
 
+    def test(self, inputs, targets):
+        model.eval()
+        predictions = []
+        with torch.no_grad():
+            for element in inputs:
+                self.model.forward(element.view(1,-1))
+                predictions.append(self.model.getOutput())
+        criterion = nn.MSELoss()
+        loss = criterion(torch.tensor(predictions, dtype=torch.float32), targets)
+        print("The mean squared error was " + str(loss.item()))
+
 input_size = 1
 hidden_size = 16
 output_size = 1
@@ -104,6 +116,10 @@ predictinator = predictor(model)
 inputs = torch.tensor([0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9], dtype=torch.float32)
 targets = torch.roll(inputs, shifts=-1)
 
-predictinator.train(inputs[:-1], targets[:-1], alpha, epochs)
+inputs = inputs[:-1]
+targets = targets[:-1]
+
+predictinator.train(inputs, targets, alpha, epochs, earlystop=0.001)
+predictinator.test(inputs, targets)
 
 
