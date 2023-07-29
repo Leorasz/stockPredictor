@@ -1,0 +1,109 @@
+import torch
+import torch.nn as nn
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+
+print("Imports finished")
+
+torch.manual_seed(1337)
+np.random.seed(1337)
+
+class LSTM(nn.Module):
+
+    def __init__(self, input_size, hidden_size, output_size):
+        super().__init__()
+
+        self.h_s = torch.zeros(1, hidden_size)
+        self.c_s = torch.zeros(1, hidden_size)
+
+        cat_size = input_size+hidden_size
+
+        self.forget_gate = nn.Linear(cat_size, hidden_size)
+
+        self.input_forget = nn.Linear(cat_size, hidden_size)
+        self.input_candidate = nn.Linear(cat_size, hidden_size)
+
+        self.output_gate = nn.Linear(cat_size, hidden_size)
+
+        self.output_linny = nn.Linear(hidden_size, output_size)
+
+    def forward(self, input):
+        cat = torch.concat((input, self.h_s), dim=1)
+
+        forget = torch.sigmoid(self.forget_gate(cat))
+        self.c_s *= forget
+
+        input_forget = torch.sigmoid(self.input_forget(cat))
+        input_candidate = torch.tanh(self.input_candidate(cat))
+        self.c_s += input_forget * input_candidate
+
+        cell_output = torch.tanh(self.c_s)
+        output_forget = torch.sigmoid(self.output_gate(cat))
+        self.h_s = output_forget * cell_output
+
+    def getOutput(self):
+        return self.output_linny(self.h_s)
+    
+    def reset(self):
+        self.h_s.zero_()
+        self.c_s.zero_()
+
+    def detach(self):
+        self.h_s.detach_()
+        self.c_s.detach_()
+            
+
+class predictor(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def train(self, inputs, targets, alpha, epochs, plot=True):
+
+        criterion = nn.MSELoss()
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=alpha)
+
+        losses = []
+        for epoch in range(epochs):
+            lossAccumulator = 0
+            for element in range(len(inputs)):
+                self.model.forward(inputs[element].view(1,-1))
+
+                output = self.model.getOutput()
+                loss = criterion(output.view(-1), targets[element].view(-1))
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                self.model.detach()
+                lossAccumulator += loss.item()
+
+            lossAccumulator /= len(inputs)
+            losses.append(lossAccumulator)
+            print(f"Epoch [{epoch+1}/{epochs}], loss is {lossAccumulator}")
+            self.model.reset()
+
+        if plot:
+            plt.plot(losses)
+            plt.show()
+            plt.clf()
+
+input_size = 1
+hidden_size = 16
+output_size = 1
+         
+model = LSTM(input_size, hidden_size, output_size)
+
+alpha = 3e-4
+epochs = 100
+
+predictinator = predictor(model)
+
+inputs = torch.tensor([0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9], dtype=torch.float32)
+targets = torch.roll(inputs, shifts=-1)
+
+predictinator.train(inputs[:-1], targets[:-1], alpha, epochs)
+
+
