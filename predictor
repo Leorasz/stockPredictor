@@ -3,21 +3,23 @@ import torch.nn as nn
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+from pytrends.request import TrendReq
+import yfinance as yf
 
 print("Imports finished")
 
 torch.manual_seed(1337)
 np.random.seed(1337)
 
-class LSTM(nn.Module):
 
+class LSTM(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super().__init__()
 
         self.h_s = torch.zeros(1, hidden_size)
         self.c_s = torch.zeros(1, hidden_size)
 
-        cat_size = input_size+hidden_size
+        cat_size = input_size + hidden_size
 
         self.forget_gate = nn.Linear(cat_size, hidden_size)
 
@@ -44,7 +46,7 @@ class LSTM(nn.Module):
 
     def getOutput(self):
         return self.output_linny(self.h_s)
-    
+
     def reset(self):
         self.h_s.zero_()
         self.c_s.zero_()
@@ -52,26 +54,27 @@ class LSTM(nn.Module):
     def detach(self):
         self.h_s.detach_()
         self.c_s.detach_()
-            
 
-class predictor(nn.Module):
+
+class Predictor(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
 
-    def train(self, inputs, targets, alpha, epochs, earlystop=0, plot=True):
-
+    def train(self, inputs, targets, epochs, alpha=3e-4, earlystop=30, plot=True):
         criterion = nn.MSELoss()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=alpha)
-
+        best = 999
+        badStreak = 0
         losses = []
         for epoch in range(epochs):
             lossAccumulator = 0
             fullbrake = False
-            for element in range(len(inputs)):
-                self.model.forward(inputs[element].view(1,-1))
+            for element in range(len(inputs) - 1):
+                self.model.forward(inputs[element].view(1, -1))
 
                 output = self.model.getOutput()
+
                 loss = criterion(output.view(-1), targets[element].view(-1))
 
                 optimizer.zero_grad()
@@ -81,45 +84,163 @@ class predictor(nn.Module):
                 self.model.detach()
                 lossAccumulator += loss.item()
 
-            lossAccumulator /= len(inputs)
+            lossAccumulator /= len(inputs) - 1
             losses.append(lossAccumulator)
-            print(f"Epoch [{epoch+1}/{epochs}], loss is {lossAccumulator}")
+            print(f"Epoch [{epoch+1}/{epochs}], loss is {lossAccumulator:.8f}")
             self.model.reset()
+            if lossAccumulator < best:
+                best = lossAccumulator
+                badStreak = 0
+            else:
+                badStreak += 1
+                if badStreak >= earlystop:
+                    print("Stopping early due to no improvement")
+                    break
 
         if plot:
             plt.plot(losses)
             plt.show()
             plt.clf()
+            plt.close()
 
-    def test(self, inputs, targets):
-        model.eval()
-        predictions = []
+    def predict(self, inputs, max, min):
+        self.model.eval()
         with torch.no_grad():
             for element in inputs:
-                self.model.forward(element.view(1,-1))
-                predictions.append(self.model.getOutput())
-        criterion = nn.MSELoss()
-        loss = criterion(torch.tensor(predictions, dtype=torch.float32), targets)
-        print("The mean squared error was " + str(loss.item()))
+                self.model.forward(element.view(1, -1))
+            rawout = self.model.getOutput()
+            out = rawout * (max - min) + min
+            print(f"The next stock price is {out.item():.2f}")
+            self.model.reset()
 
-input_size = 1
-hidden_size = 16
-output_size = 1
-         
-model = LSTM(input_size, hidden_size, output_size)
+    def prove(self, data, start):
+        self.model.eval()
+        cutoff = int(len(data) * start)
+        with torch.no_grad():
+            outputs = [data[cutoff, 0]]
+            for element in data[:cutoff]:
+                self.model.forward(element.view(1, -1))
+            for element in data[cutoff:]:
+                self.model.forward(
+                    torch.cat((outputs[-1].view(1), element[1:].view(-1))).view(1, -1)
+                )
+                outputs.append(self.model.getOutput())
+            outputs = [output.view(1).numpy() for output in outputs]
+            fc = data[:, 0]
+            # plt.plot(fc.numpy(), label="Actual stock")
+            # plt.show()
+            plt.figure(num=1)
+            plt.plot(fc.numpy(), label="Actual stock")
+            plt.plot(
+                range(cutoff, cutoff + len(outputs)),
+                np.array(outputs),
+                label="Predictions",
+            )
+            plt.legend()
+            plt.show()
+            plt.close(1)
+            plt.clf()
 
-alpha = 3e-4
-epochs = 100
 
-predictinator = predictor(model)
+class Information:
+    def __init__(self):
+        self.data = pd.DataFrame()
+        self.trends = pd.DataFrame()
+        self.stocks = []
 
-inputs = torch.tensor([0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9], dtype=torch.float32)
-targets = torch.roll(inputs, shifts=-1)
+    def choosePredict(self):
+        print("Alright, so what stock do you want to predict?")
+        stock = input("Stock to predict: ")
+        stockData = yf.Ticker(stock).history(period="2y", interval="60m")
+        stockData = stockData[["High"]]
+        if stockData.index.tz is not None:
+            stockData.index = stockData.index.tz_convert(None)
+        self.stocks.append(stockData)
 
-inputs = inputs[:-1]
-targets = targets[:-1]
+    def chooseStocks(self):
+        print(
+            'Now choose what stocks you want to base your predictions on. Type "exit" (without the quotes) to finish'
+        )
+        while True:
+            tb = input("Stock: ")
+            if tb == "exit":
+                print("Finished picking stocks")
+                break
+            self.stocks.append(yf.Ticker(tb).history(period="2y", interval="60m"))
+        for i in range(1, len(self.stocks)):
+            self.stocks[i] = self.stocks[i][["High"]]
+            if self.stocks[i].index.tz is not None:
+                self.stocks[i].index = self.stocks[i].index.tz_convert(None)
 
-predictinator.train(inputs, targets, alpha, epochs, earlystop=0.001)
-predictinator.test(inputs, targets)
+    def chooseTrends(self):
+        print(
+            "Finally, choose which google trends you want to use. Exit in the same way."
+        )
+        trendos = []
+        pytrends = TrendReq(hl="en-US")
+        while True:
+            tb = input("Google Trend: ")
+            if tb == "exit":
+                break
+            trendos.append(tb)
+        if len(trendos) > 0:
+            pytrends.build_payload(trendos, timeframe="today 5-y")
+            self.trends = pytrends.interest_over_time()
+            if self.trends.index.tz is not None:
+                self.trends.inex = self.trends.indez.tz_convert(None)
+
+    def cleanData(self, data):
+        booleancs = []
+        for j in range(data.shape[1]):
+            if isinstance(data[0][j], bool):
+                booleancs.append(j)
+        for index, i in enumerate(booleancs):
+            data = np.delete(data, i - index, axis=1)
+        nanrs = []
+        for index, i in enumerate(data):
+            for j in i:
+                if np.isnan(j):
+                    nanrs.append(index)
+        nanrs = list(set(nanrs))
+        for index, i in enumerate(nanrs):
+            data = np.delete(data, i - index, axis=0)
+        data = data.astype(np.float64)
+        return data
+
+    def scaleData(self, data):
+        min_vals = data.min(axis=0)
+        max_vals = data.max(axis=0)
+
+        # Perform Min-Max scaling for each column
+        return (data - min_vals) / (max_vals - min_vals), max_vals[0], min_vals[0]
+
+    def chooseInfo(self):
+        self.choosePredict()
+        self.chooseStocks()
+        self.chooseTrends()
+        self.data = pd.concat([*self.stocks, self.trends], axis=1)
+        self.data.ffill(inplace=True)
+        self.data = np.array(self.data.values)
+        self.data = self.cleanData(self.data)
+        self.data, max, min = self.scaleData(self.data)
+        return self.data, max, min
 
 
+print(
+    "Welcome to Stock Predictor! Follow the instructions as provided and get an accurate prediction of the next hour's stock price!"
+)
+info = Information()
+data, max, min = info.chooseInfo()
+targets = np.concatenate((data[1:], data[:1]))
+targets = targets[:, 0]
+datat = torch.tensor(data, dtype=torch.float32)
+targetst = torch.tensor(targets, dtype=torch.float32)
+model = LSTM(datat.shape[1], 32, 1)
+predictor = Predictor(model)
+epochs = int(input("How many epochs do you want to train it for? "))
+plot = input("Do you want to show graph of loss? (y/n) ") == "y"
+predictor.train(datat, targetst, epochs, plot=plot)
+predictor.predict(datat, max, min)
+toProve = input("Do you want to prove accuracy? (y/n) ")
+if toProve == "y":
+    predictor.prove(datat, 0.9)
