@@ -12,12 +12,12 @@ torch.manual_seed(1337)
 np.random.seed(1337)
 
 
-class LSTM(nn.Module):
+class LSTM(nn.Module): #LSTM model- I didn't use torch.nn.LSTM bc I wanted more customizability and to understand what exactly was going on
     def __init__(self, input_size, hidden_size, output_size):
         super().__init__()
-
-        self.h_s = torch.zeros(1, hidden_size)
-        self.c_s = torch.zeros(1, hidden_size)
+        
+        self.h_s = torch.zeros(1, hidden_size) #hidden state / short-term memory
+        self.c_s = torch.zeros(1, hidden_size) #cell state / long-term memory
 
         cat_size = input_size + hidden_size
 
@@ -28,7 +28,7 @@ class LSTM(nn.Module):
 
         self.output_gate = nn.Linear(cat_size, hidden_size)
 
-        self.output_linny = nn.Linear(hidden_size, output_size)
+        self.output_linny = nn.Linear(hidden_size, output_size) #final linear transformation to convert the hidden state to a usable output
 
     def forward(self, input):
         cat = torch.concat((input, self.h_s), dim=1)
@@ -64,14 +64,13 @@ class Predictor(nn.Module):
     def train(self, inputs, targets, epochs, alpha=3e-4, earlystop=30, plot=True):
         criterion = nn.MSELoss()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=alpha)
-        best = 999
+        best = float("inf")
         badStreak = 0
         losses = []
         for epoch in range(epochs):
             lossAccumulator = 0
-            fullbrake = False
             for element in range(len(inputs) - 1):
-                self.model.forward(inputs[element].view(1, -1))
+                self.model.forward(inputs[element].view(1, -1)) #forward propogate every element in the data, i use a batch size of 1 bc i've heard that that's what's best for LSTMs like this
 
                 output = self.model.getOutput()
 
@@ -82,12 +81,12 @@ class Predictor(nn.Module):
                 optimizer.step()
 
                 self.model.detach()
-                lossAccumulator += loss.item()
+                lossAccumulator += loss.item() #this is purely for graphing the loss function
 
             lossAccumulator /= len(inputs) - 1
             losses.append(lossAccumulator)
             print(f"Epoch [{epoch+1}/{epochs}], loss is {lossAccumulator:.8f}")
-            self.model.reset()
+            self.model.reset() #once through all the data, reset
             if lossAccumulator < best:
                 best = lossAccumulator
                 badStreak = 0
@@ -109,11 +108,11 @@ class Predictor(nn.Module):
             for element in inputs:
                 self.model.forward(element.view(1, -1))
             rawout = self.model.getOutput()
-            out = rawout * (max - min) + min
+            out = rawout * (max - min) + min #rescale the output back to its original size
             print(f"The next stock price is {out.item():.2f}")
             self.model.reset()
 
-    def prove(self, data, start):
+    def prove(self, data, start): #this function is to plot the original stock price and the predicted so you can eyeball them to see how close they fit
         self.model.eval()
         cutoff = int(len(data) * start)
         with torch.no_grad():
@@ -127,8 +126,6 @@ class Predictor(nn.Module):
                 outputs.append(self.model.getOutput())
             outputs = [output.view(1).numpy() for output in outputs]
             fc = data[:, 0]
-            # plt.plot(fc.numpy(), label="Actual stock")
-            # plt.show()
             plt.figure(num=1)
             plt.plot(fc.numpy(), label="Actual stock")
             plt.plot(
@@ -142,7 +139,7 @@ class Predictor(nn.Module):
             plt.clf()
 
 
-class Information:
+class Information: #this class is all about just getting the data to use to predict the stock price
     def __init__(self):
         self.data = pd.DataFrame()
         self.trends = pd.DataFrame()
@@ -190,13 +187,13 @@ class Information:
                 self.trends.inex = self.trends.indez.tz_convert(None)
 
     def cleanData(self, data):
-        booleancs = []
+        booleancs = [] #not going to use those booleans, this list stores which columns to delete
         for j in range(data.shape[1]):
             if isinstance(data[0][j], bool):
                 booleancs.append(j)
         for index, i in enumerate(booleancs):
             data = np.delete(data, i - index, axis=1)
-        nanrs = []
+        nanrs = [] #similarly, this list stores which rows to delete because of NaN values
         for index, i in enumerate(data):
             for j in i:
                 if np.isnan(j):
@@ -214,13 +211,12 @@ class Information:
         # Perform Min-Max scaling for each column
         return (data - min_vals) / (max_vals - min_vals), max_vals[0], min_vals[0]
 
-    def chooseInfo(self):
+    def chooseInfo(self): #this function walks you through the entire data-specification process
         self.choosePredict()
         self.chooseStocks()
         self.chooseTrends()
         self.data = pd.concat([*self.stocks, self.trends], axis=1)
         self.data.ffill(inplace=True)
-        print(self.data)
         self.data = np.array(self.data.values)
         self.data = self.cleanData(self.data)
         self.data, max, min = self.scaleData(self.data)
@@ -232,7 +228,7 @@ print(
 )
 info = Information()
 data, max, min = info.chooseInfo()
-targets = np.concatenate((data[1:], data[:1]))
+targets = np.concatenate((data[1:], data[:1])) #create the targets
 targets = targets[:, 0]
 datat = torch.tensor(data, dtype=torch.float32)
 targetst = torch.tensor(targets, dtype=torch.float32)
@@ -242,6 +238,5 @@ epochs = int(input("How many epochs do you want to train it for? "))
 plot = input("Do you want to show graph of loss? (y/n) ") == "y"
 predictor.train(datat, targetst, epochs, plot=plot)
 predictor.predict(datat, max, min)
-toProve = input("Do you want to prove accuracy? (y/n) ")
-if toProve == "y":
+if input("Do you want to prove accuracy? (y/n) ") == "y":
     predictor.prove(datat, 0.9)
