@@ -1,5 +1,4 @@
 # Use an official PyTorch base image
-# Use an official PyTorch base image
 FROM pytorch/pytorch:latest
 
 # Copy the local code to the container's current working directory
